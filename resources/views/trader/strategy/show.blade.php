@@ -130,6 +130,7 @@
                                     <small class="text-muted">(Profit target: ₹{{ number_format($strategy->profit_target_amount, 2) }})</small>
                                 </p>
                                 <input type="hidden" id="cryptoCoin" value="{{ $strategy->crypto_coin }}">
+                                <input type="hidden" id="strategyId" value="{{ $strategy->id }}">
                                 <input type="hidden" id="unitsHeld" value="{{ $strategy->units_held }}">
                                 <input type="hidden" id="totalInvested" value="{{ $strategy->total_invested_amount }}">
                                 <input type="hidden" id="avgPrice" value="{{ $strategy->current_average_price }}">
@@ -137,6 +138,7 @@
                                 <input type="hidden" id="dipPercentage" value="{{ $strategy->buy_dip_percentage }}">
                                 <input type="hidden" id="dipAmount" value="{{ $strategy->buy_dip_amount }}">
                                 <input type="hidden" id="profitTarget" value="{{ $strategy->profit_target_amount }}">
+                                <input type="hidden" id="dipEligibilityUrl" value="{{ route('trader.strategy.dip-eligibility', $strategy->id) }}">
                             </div>
                         </div>
                     </div>
@@ -202,6 +204,9 @@
                                             <th>Units</th>
                                             <th>Price</th>
                                             <th>Amount</th>
+                                            <th>Post Avg</th>
+                                            <th>Units After</th>
+                                            <th>Invested After</th>
                                             <th>P/L</th>
                                             <th>Reason</th>
                                         </tr>
@@ -210,16 +215,19 @@
                                         @forelse($journalEntries as $entry)
                                             <tr>
                                                 <td>{{ $entry->created_at->format('M d, Y H:i') }}</td>
-                                                <td><span class="badge badge-{{ $entry->action_type === 'buy' || $entry->action_type === 'dip_buy' || $entry->action_type === 'sip_reminder' ? 'primary' : 'success' }}">{{ ucfirst($entry->action_type) }}</span></td>
+                                                <td><span class="badge badge-{{ in_array($entry->action_type, ['buy','dip_buy','sip','sip_reminder']) ? 'primary' : 'success' }}">{{ ucfirst($entry->action_type) }}</span></td>
                                                 <td>{{ number_format($entry->units_bought_sold, 8) }}</td>
                                                 <td>₹{{ number_format($entry->price_per_unit, 8) }}</td>
                                                 <td>₹{{ number_format($entry->total_amount, 2) }}</td>
+                                                <td>₹{{ number_format($entry->current_average_price, 8) }}</td>
+                                                <td>{{ number_format($entry->total_units_after_action, 8) }}</td>
+                                                <td>₹{{ number_format($entry->total_invested_after_action, 2) }}</td>
                                                 <td>₹{{ number_format($entry->profit_loss_amount, 2) }} ({{ number_format($entry->profit_loss_percentage, 2) }}%)</td>
                                                 <td>{{ $entry->reason }}</td>
                                             </tr>
                                         @empty
                                             <tr>
-                                                <td colspan="7" class="text-center">No transactions yet</td>
+                                                <td colspan="10" class="text-center">No transactions yet</td>
                                             </tr>
                                         @endforelse
                                     </tbody>
@@ -261,6 +269,11 @@
                             </div>
                         </div>
                         <small class="form-text text-muted">Enter the current market price to execute this SIP</small>
+                    </div>
+                    <input type="hidden" id="sipAmount" value="{{ number_format($strategy->monthly_sip_amount, 2, '.', '') }}">
+                    <div class="alert alert-secondary" id="sipPreview" style="display:none;">
+                        <strong>Expected Post-SIP Update:</strong><br>
+                        <span id="sipPreviewText"></span>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -449,56 +462,57 @@ $(document).ready(function() {
     let dipPriceThreshold = 0;
     let targetProfitPrice = 0;
 
-    function calculateTargetPrices() {
+    function calculateTargetPrices(livePrice) {
         const initialPrice = parseFloat($('#initialPrice').val());
-        const avgPrice = parseFloat($('#avgPrice').val());
         const dipPercentage = parseFloat($('#dipPercentage').val());
         const profitTarget = parseFloat($('#profitTarget').val());
         const totalInvested = parseFloat($('#totalInvested').val());
         const unitsHeld = parseFloat($('#unitsHeld').val());
 
-        // Calculate next dip buy price (based on initial price)
-        const currentDropPercent = ((initialPrice - avgPrice) / initialPrice) * 100;
-        const nextDipMultiple = Math.floor(currentDropPercent / dipPercentage) + 1;
-        dipPriceThreshold = initialPrice * (1 - (nextDipMultiple * dipPercentage / 100));
+        // Use live price when provided; else fall back to current displayed price
+        const effectivePrice = typeof livePrice === 'number' && !isNaN(livePrice)
+            ? livePrice
+            : parseFloat($('#currentPriceDisplay').text().replace('₹', '').replace(/,/g, '')) || initialPrice;
 
-        // Calculate target profit price (based on average price)
-        // We need: (units * price) - totalInvested >= profitTarget
-        // price >= (totalInvested + profitTarget) / units
-        targetProfitPrice = unitsHeld > 0 ? (totalInvested + profitTarget) / unitsHeld : 0;
+        // Determine next dip threshold relative to the initial price
+        fetchDipEligibility(effectivePrice, function(res) {
+            dipPriceThreshold = res.nextDipPriceThreshold || 0;
 
-        // Update display
-        $('#nextDipPrice').text('₹' + dipPriceThreshold.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
-        $('#targetPrice').text('₹' + targetProfitPrice.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+            // Target profit price based on current holdings
+            targetProfitPrice = unitsHeld > 0 ? (totalInvested + profitTarget) / unitsHeld : 0;
+
+            // Update display
+            $('#nextDipPrice').text('₹' + (dipPriceThreshold || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+            $('#targetPrice').text('₹' + targetProfitPrice.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+        });
     }
 
     function checkPriceAlerts(livePrice) {
         const dipAmount = parseFloat($('#dipAmount').val());
         $('#priceAlerts').empty();
+        fetchDipEligibility(livePrice, function(res) {
+            const totalDipAmount = res.totalDipAmount || dipAmount;
+            if (livePrice <= (res.nextDipPriceThreshold || 0)) {
+                $('#priceAlerts').html(`
+                    <div class="alert alert-info alert-dismissible fade show">
+                        <button type="button" class="close" data-dismiss="alert">&times;</button>
+                        <strong><i class="fas fa-arrow-down"></i> Buy Dip Alert!</strong><br>
+                        Price reached ₹${livePrice.toLocaleString('en-IN', {minimumFractionDigits: 2})}. 
+                        <a href="#" id="triggerDipBuy" class="alert-link">Click here to buy ₹${totalDipAmount.toLocaleString('en-IN', {minimumFractionDigits: 2})}</a>
+                    </div>
+                `);
+            }
 
-        // Check if price reached dip threshold
-        if (livePrice <= dipPriceThreshold) {
-            $('#priceAlerts').html(`
-                <div class="alert alert-info alert-dismissible fade show">
-                    <button type="button" class="close" data-dismiss="alert">&times;</button>
-                    <strong><i class="fas fa-arrow-down"></i> Buy Dip Alert!</strong><br>
-                    Price reached ₹${livePrice.toLocaleString('en-IN', {minimumFractionDigits: 2})}. 
-                    <a href="#" id="triggerDipBuy" class="alert-link">Click here to buy ₹${dipAmount.toLocaleString('en-IN', {minimumFractionDigits: 2})}</a>
-                </div>
-            `);
-        }
-
-        // Check if price reached target threshold
-        if (livePrice >= targetProfitPrice) {
-            const existingAlert = $('#priceAlerts').html();
-            $('#priceAlerts').append(`
-                <div class="alert alert-success alert-dismissible fade show">
-                    <button type="button" class="close" data-dismiss="alert">&times;</button>
-                    <strong><i class="fas fa-arrow-up"></i> Target Reached!</strong><br>
-                    Price reached ₹${livePrice.toLocaleString('en-IN', {minimumFractionDigits: 2})}. Consider booking profits!
-                </div>
-            `);
-        }
+            if (livePrice >= targetProfitPrice) {
+                $('#priceAlerts').append(`
+                    <div class="alert alert-success alert-dismissible fade show">
+                        <button type="button" class="close" data-dismiss="alert">&times;</button>
+                        <strong><i class="fas fa-arrow-up"></i> Target Reached!</strong><br>
+                        Price reached ₹${livePrice.toLocaleString('en-IN', {minimumFractionDigits: 2})}. Consider booking profits!
+                    </div>
+                `);
+            }
+        });
     }
 
     function fetchLivePrice(callback) {
@@ -523,6 +537,7 @@ $(document).ready(function() {
                 if (data[coinId] && data[coinId].inr) {
                     const livePrice = data[coinId].inr;
                     updatePriceAndCalculations(livePrice);
+                    calculateTargetPrices(livePrice);
                     checkPriceAlerts(livePrice);
                     if (callback) callback(livePrice);
                 } else {
@@ -604,6 +619,7 @@ $(document).ready(function() {
         
         fetchLivePrice(function(price) {
             $('#sipCurrentPrice').val(price);
+            calculateSipPreview();
             btn.prop('disabled', false);
         });
     });
@@ -743,72 +759,58 @@ $(document).ready(function() {
         const initialPrice = parseFloat($('#initialPrice').val());
         const dipPercentage = parseFloat($('#dipPercentage').val());
         const dipAmount = parseFloat($('#dipAmount').val());
-        
+
         if (currentPrice > 0 && initialPrice > 0) {
-            // Calculate actual drop percentage
-            const dropPercentage = ((initialPrice - currentPrice) / initialPrice) * 100;
-            
-            // Check if price has dropped enough
-            if (dropPercentage >= dipPercentage) {
-                const numberOfDips = Math.floor(dropPercentage / dipPercentage);
-                const targetDropPercentage = dipPercentage * numberOfDips;
-                const nextDipPrice = initialPrice * (1 - (targetDropPercentage / 100));
-                
-                // Calculate TOTAL amount to invest based on number of dips
-                // Example: 10% drop = 1 dip = ₹1000, 20% drop = 2 dips = ₹2000
-                const totalDipAmount = dipAmount * numberOfDips;
-                
-                // Update the amount field to show total amount
-                $('#dipBuyAmount').val(totalDipAmount.toFixed(2));
-                
-                // Calculate units based on TOTAL dip amount
-                const unitsToBuy = totalDipAmount / currentPrice;
-                $('#dipBuyUnits').val(unitsToBuy.toFixed(8));
-                
-                // Show eligibility - ELIGIBLE
-                $('#dipEligibility').removeClass('alert-warning').addClass('alert-success');
-                $('#dipEligibilityText').html(
-                    `✅ <strong>ELIGIBLE FOR DIP BUY!</strong><br>` +
-                    `Current Price: ₹${currentPrice.toFixed(2)}<br>` +
-                    `Initial Price: ₹${initialPrice.toFixed(2)}<br>` +
-                    `Drop: ${dropPercentage.toFixed(2)}% (Target: ${dipPercentage}% per dip)<br>` +
-                    `Number of Dips: ${numberOfDips}<br>` +
-                    `Amount per Dip: ₹${dipAmount.toFixed(2)}<br>` +
-                    `<strong>Total Amount to Invest: ₹${totalDipAmount.toFixed(2)}</strong>`
-                );
-                $('#dipEligibility').show();
-                
-                // Show calculation
-                $('#dipCalculationText').html(
-                    `Buying ${unitsToBuy.toFixed(8)} units @ ₹${currentPrice.toFixed(2)}<br>` +
-                    `Total Investment: ₹${totalDipAmount.toFixed(2)} (${numberOfDips} dips × ₹${dipAmount.toFixed(2)})<br>` +
-                    `This will add to your holdings`
-                );
-                $('#dipCalculation').show();
-                
-                $('#submitDipBuy').prop('disabled', false);
-            } else {
-                // Not eligible yet
-                const priceNeedsToDrop = initialPrice * (1 - (dipPercentage / 100));
-                const additionalDropNeeded = currentPrice - priceNeedsToDrop;
-                
-                $('#dipBuyUnits').val('0');
-                
-                $('#dipEligibility').removeClass('alert-success').addClass('alert-warning');
-                $('#dipEligibilityText').html(
-                    `⚠️ <strong>NOT ELIGIBLE YET</strong><br>` +
-                    `Current Price: ₹${currentPrice.toFixed(2)}<br>` +
-                    `Initial Price: ₹${initialPrice.toFixed(2)}<br>` +
-                    `Current Drop: ${dropPercentage.toFixed(2)}%<br>` +
-                    `Required Drop: ${dipPercentage}%<br>` +
-                    `Price needs to drop to: ₹${priceNeedsToDrop.toFixed(2)}<br>` +
-                    `Additional drop needed: ₹${additionalDropNeeded.toFixed(2)}`
-                );
-                $('#dipEligibility').show();
-                $('#dipCalculation').hide();
-                
-                $('#submitDipBuy').prop('disabled', true);
-            }
+            fetchDipEligibility(currentPrice, function(res) {
+                if (res.eligible) {
+                    const totalDipAmount = res.totalDipAmount || (dipAmount * res.numberOfDips);
+                    const unitsToBuy = res.suggestedUnits || (totalDipAmount / currentPrice);
+
+                    $('#dipBuyAmount').val(totalDipAmount.toFixed(2));
+                    $('#dipBuyUnits').val(unitsToBuy.toFixed(8));
+
+                    $('#dipEligibility').removeClass('alert-warning').addClass('alert-success');
+                    $('#dipEligibilityText').html(
+                        `✅ <strong>ELIGIBLE FOR DIP BUY!</strong><br>` +
+                        `Current Price: ₹${currentPrice.toFixed(2)}<br>` +
+                        `Initial Price: ₹${initialPrice.toFixed(2)}<br>` +
+                        `Drop: ${res.dropPercentage.toFixed(2)}% (Target: ${dipPercentage}% per dip)<br>` +
+                        `Number of Dips: ${res.numberOfDips}<br>` +
+                        `Amount per Dip: ₹${dipAmount.toFixed(2)}<br>` +
+                        `<strong>Total Amount to Invest: ₹${totalDipAmount.toFixed(2)}</strong>`
+                    );
+                    $('#dipEligibility').show();
+
+                    $('#dipCalculationText').html(
+                        `Buying ${unitsToBuy.toFixed(8)} units @ ₹${currentPrice.toFixed(2)}<br>` +
+                        `Total Investment: ₹${totalDipAmount.toFixed(2)} (${res.numberOfDips} dips × ₹${dipAmount.toFixed(2)})<br>` +
+                        `This will add to your holdings`
+                    );
+                    $('#dipCalculation').show();
+
+                    $('#submitDipBuy').prop('disabled', false);
+                } else {
+                    const priceNeedsToDrop = initialPrice * (1 - (dipPercentage / 100));
+                    const additionalDropNeeded = currentPrice - priceNeedsToDrop;
+
+                    $('#dipBuyUnits').val('0');
+
+                    $('#dipEligibility').removeClass('alert-success').addClass('alert-warning');
+                    $('#dipEligibilityText').html(
+                        `⚠️ <strong>NOT ELIGIBLE YET</strong><br>` +
+                        `Current Price: ₹${currentPrice.toFixed(2)}<br>` +
+                        `Initial Price: ₹${initialPrice.toFixed(2)}<br>` +
+                        `Current Drop: ${res.dropPercentage.toFixed(2)}%<br>` +
+                        `Required Drop: ${dipPercentage}%<br>` +
+                        `Price needs to drop to: ₹${priceNeedsToDrop.toFixed(2)}<br>` +
+                        `Additional drop needed: ₹${additionalDropNeeded.toFixed(2)}`
+                    );
+                    $('#dipEligibility').show();
+                    $('#dipCalculation').hide();
+
+                    $('#submitDipBuy').prop('disabled', true);
+                }
+            });
         } else {
             $('#dipEligibility').hide();
             $('#dipCalculation').hide();
@@ -832,6 +834,37 @@ $(document).ready(function() {
     // Initialize
     calculateTargetPrices();
 
+    // SIP preview calculation
+    function calculateSipPreview() {
+        const sipPrice = parseFloat($('#sipCurrentPrice').val());
+        const sipAmount = parseFloat($('#sipAmount').val());
+        const unitsHeld = parseFloat($('#unitsHeld').val());
+        const totalInvested = parseFloat($('#totalInvested').val());
+
+        if (sipPrice > 0 && sipAmount > 0) {
+            const unitsToBuy = sipAmount / sipPrice;
+            const newUnits = unitsHeld + unitsToBuy;
+            const newInvested = totalInvested + sipAmount;
+            const newAvg = newUnits > 0 ? (newInvested / newUnits) : 0;
+
+            $('#sipPreviewText').html(
+                `Price: ₹${sipPrice.toFixed(2)} | SIP Amount: ₹${sipAmount.toFixed(2)}<br>` +
+                `Units to buy: ${unitsToBuy.toFixed(8)}<br>` +
+                `Total units after: ${newUnits.toFixed(8)}<br>` +
+                `Total invested after: ₹${newInvested.toFixed(2)}<br>` +
+                `<strong>Expected average after SIP: ₹${newAvg.toFixed(8)}</strong>`
+            );
+            $('#sipPreview').show();
+        } else {
+            $('#sipPreview').hide();
+        }
+    }
+
+    // Trigger SIP preview on input
+    $('#sipCurrentPrice').on('input', function() {
+        calculateSipPreview();
+    });
+
     // Auto-fetch live price on page load
     setTimeout(function() {
         fetchLivePrice();
@@ -841,6 +874,28 @@ $(document).ready(function() {
     setInterval(function() {
         fetchLivePrice();
     }, 60000);
+
+    // Server-backed dip eligibility fetch
+    function fetchDipEligibility(price, callback) {
+        const url = $('#dipEligibilityUrl').val();
+        $.ajax({
+            url: url,
+            method: 'GET',
+            data: { price: price },
+            dataType: 'json',
+            timeout: 8000,
+            success: function(res) {
+                if (typeof callback === 'function') {
+                    callback(res);
+                }
+            },
+            error: function() {
+                if (typeof callback === 'function') {
+                    callback({ eligible: false, numberOfDips: 0, totalDipAmount: 0, dropPercentage: 0, nextDipPriceThreshold: 0 });
+                }
+            }
+        });
+    }
 });
 </script>
 </body>

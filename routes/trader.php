@@ -37,4 +37,5 @@ Route::middleware('auth:trader', 'verified')->group(function () {
     Route::post('trader/strategy/{strategy}/transaction', [StrategyController::class, 'recordTransaction'])->name('trader.strategy.transaction');
     Route::post('trader/strategy/{strategy}/sip-reminder', [StrategyController::class, 'generateSIPReminder'])->name('trader.strategy.sip-reminder');
     Route::get('trader/strategy/{strategy}/journal', [StrategyController::class, 'journal'])->name('trader.strategy.journal');
+    Route::get('trader/strategy/{strategy}/dip-eligibility', [StrategyController::class, 'dipEligibility'])->name('trader.strategy.dip-eligibility');
 });

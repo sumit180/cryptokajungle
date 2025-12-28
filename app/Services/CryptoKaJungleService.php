@@ -51,6 +51,40 @@ class CryptoKaJungleService
     }
 
     /**
+     * Unified dip eligibility computation for consistent use across UI and backend
+     */
+    public function isDipEligible(Strategy $strategy, float $currentPrice): array
+    {
+        $eligible = false;
+        $numberOfDips = 0;
+        $totalDipAmount = 0.0;
+        $dropPercentage = 0.0;
+        $nextDipPriceThreshold = 0.0;
+
+        if ($currentPrice > 0 && $strategy->initial_price > 0 && $strategy->buy_dip_percentage > 0) {
+            $dropPercentage = (($strategy->initial_price - $currentPrice) / $strategy->initial_price) * 100;
+
+            if ($dropPercentage >= $strategy->buy_dip_percentage) {
+                $numberOfDips = (int) floor($dropPercentage / $strategy->buy_dip_percentage);
+                $totalDipAmount = $numberOfDips * (float) $strategy->buy_dip_amount;
+                $eligible = $numberOfDips > 0;
+            }
+
+            // Next upcoming dip threshold price from initial
+            $nextMultiple = (int) floor($dropPercentage / $strategy->buy_dip_percentage) + 1;
+            $nextDipPriceThreshold = (float) $strategy->initial_price * (1 - ($nextMultiple * (float) $strategy->buy_dip_percentage / 100));
+        }
+
+        return [
+            'eligible' => $eligible,
+            'numberOfDips' => $numberOfDips,
+            'totalDipAmount' => round($totalDipAmount, 2),
+            'dropPercentage' => $dropPercentage,
+            'nextDipPriceThreshold' => $nextDipPriceThreshold,
+        ];
+    }
+
+    /**
      * Check profit target and execute profit booking
      * If current profit >= target profit amount, sell
      */

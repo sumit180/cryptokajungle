@@ -168,7 +168,22 @@ class StrategyController extends Controller
     {
         $this->authorize('update', $strategy);
 
-        $currentPrice = $request->input('current_price', $strategy->current_average_price);
+        // Validate price input minimally, and fetch live price if missing/invalid
+        $inputPrice = $request->input('current_price');
+        $currentPrice = is_numeric($inputPrice) && (float) $inputPrice > 0
+            ? (float) $inputPrice
+            : 0.0;
+
+        if ($currentPrice <= 0) {
+            // Try live price first
+            $currentPrice = (float) $this->strategySvc->fetchLivePrice($strategy->crypto_coin);
+        }
+
+        if ($currentPrice <= 0) {
+            // Fallback to average price to ensure progress
+            $currentPrice = (float) $strategy->current_average_price;
+        }
+
         $this->strategySvc->executeSIPInvestment($strategy, $currentPrice);
 
         return back()->with('success', 'SIP investment of ₹' . number_format($strategy->monthly_sip_amount, 2) . ' executed successfully');
@@ -184,5 +199,32 @@ class StrategyController extends Controller
         $journalEntries = $strategy->journalEntries()->orderBy('created_at', 'desc')->paginate(50);
 
         return view('trader.strategy.journal', compact('strategy', 'journalEntries'));
+    }
+
+    /**
+     * Dip eligibility endpoint
+     */
+    public function dipEligibility(Strategy $strategy, Request $request)
+    {
+        $this->authorize('view', $strategy);
+
+        $priceParam = $request->query('price');
+        $currentPrice = is_numeric($priceParam) && (float) $priceParam > 0
+            ? (float) $priceParam
+            : 0.0;
+
+        if ($currentPrice <= 0) {
+            $currentPrice = (float) $this->strategySvc->fetchLivePrice($strategy->crypto_coin);
+        }
+
+        if ($currentPrice <= 0) {
+            $currentPrice = (float) $strategy->current_average_price;
+        }
+
+        $result = $this->strategySvc->isDipEligible($strategy, $currentPrice);
+        $result['currentPrice'] = $currentPrice;
+        $result['suggestedUnits'] = $currentPrice > 0 ? round($result['totalDipAmount'] / $currentPrice, 8) : 0.0;
+
+        return response()->json($result);
     }
 }
