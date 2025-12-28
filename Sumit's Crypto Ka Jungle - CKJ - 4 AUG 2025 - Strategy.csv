@@ -1,0 +1,32 @@
+Disclaimer: This sheet is for educational purpose only and anyone using it for their investment will be fully responsible for the profits or losses incurred,
+,
+,
+"<> To edit this sheet, please 'Make a copy' using the option given in the File menu above <>",
+,
+Step#,Step
+1,Capital Management sheet can be used to track the amount deposited into and withdrawn from the Exchange app
+2,"a) Go to the CKJ sheet,
+b) Click the button 'Paste sheet’s URL' near U1, it will automatically copy the URL of that page and paste in U1
+c) The above step will also activate the Appscript to pull the data from ConDCX (without appscript activation, the data will be pulled from Google Finance)"
+3,Go to the CKJ sheet and add the Crypto data under Yellow headers from A5 onwards (do not enter anything under non Yellow headers as they have formulas)
+4,"In the Summary sheet, the Crypto codes and their respective data related to buying and selling will auto-populate"
+5,Go to the Summary sheet and add the data under Yellow headers from Y5 onwards (do not enter anything under non Yellow headers as they have formulas)
+6,"In the Summary sheet, we can define the minimum profit% in AB2 and minimum profit booking amount in AB3. 
+The column AB will show the higher of the 2 amounts:
+a) Minimum Profit amount; b) 1% of the Base Investment amount"
+7,"If you are selling the entire crypto units for any crypto, then it has to be closed and removed from CKJ sheet. This can be done automatically using the button 'Close Ped of'. The data will be stored in the sheet Closed Peds. Once the data of the crypto is transferred to the 'Closed Peds', make the last entry of selling all the unit of the particular crypto"
+8,Monthly Performance sheet will display the summary of profit bookings of all scrips
+9,Crypto Tax sheet can be used for calculating the income tax
+,
+,FIRE in India's video
+,https://youtu.be/oZskcqsEi1o
+,Video where I had shown the demo of Tax optimisation in this strategy
+,
+,Back Testing Sheet is given within this sheet. No separate sheet is there for Back testing
+,
+,"Original sheet's link
+Use this link to access the latest sheet"
+,
+,Explore all of my sheets here
+,
+,Click here to watch the video to know how to select the other BEST strategies for yourself 👍
